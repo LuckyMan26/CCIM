@@ -21,6 +21,8 @@
 
 // We'll also include stdio for printf.
 #include <stdio.h>
+#include "../halide_image_io.h"
+
 
 Halide::Func matrix_power_p(Halide::Var x, Halide::Var y, Halide::Var d, Halide::Func& input, int exponent, int cols) {
    
@@ -42,13 +44,13 @@ Halide::Func matrix_power_p(Halide::Var x, Halide::Var y, Halide::Var d, Halide:
 
     return result;
 }
-Halide::Func matrix_multiplication(Halide::Var x, Halide::Var y, Halide::Var d,Halide::Func& L, Halide::Func& P) {
+Halide::Func matrix_multiplication(Halide::Var x, Halide::Var y, Halide::Var d,Halide::Func L, Halide::Func P,int row_size) {
     Halide::Func res;
-    Halide::RDom r(0, 4, "r");
+    Halide::RDom r(0, row_size, "r");
     
     res(x, y,d) = Halide::sum(L(r, y,d) * P(x, r,d));
-    std::cout << std::endl;
   
+   
  
     return res;
 }
@@ -113,21 +115,25 @@ int main(int argc, char** argv) {
   
     Halide::Var s, t, x, y, d;
     Halide::Func  X, B, M;
-
+    Halide::Func Z;
+    Halide::Buffer<uint8_t> input = Halide::Tools::load_image("E:\\test2.jpeg");
     //Here we set up matrix dimensions
     //It is size of target box
     int m, n;
-    m = 4;
-    n = 4;
+    
     //it is size of full image
     int Mi, N;
-    Mi = 4;
-    N = 4;
-   
+    Mi = input.height();
+    N = input.width();
+    std::cout << Mi << " " << N << "\n";
+    m = Mi / 4;
+    n = N / 4;
  
     Halide::Func P;
     Halide::Func Q;
-
+    B(x, y, s, t, d) = 0;
+    std::clock_t clock = std::clock();
+    Z(x, y, d) = input(x, y, d);
     P(x, y,d) = select(
         (x == 0 && y < m - 1), 0,
         (x == 0 && y == m - 1), 1,
@@ -143,18 +149,18 @@ int main(int argc, char** argv) {
 
         0
     );
-
+    P.compute_root();
+    Q.compute_root();
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
-            Halide::Func power_p = matrix_power_p(x,y,d,P, -i, Mi);
-            Halide::Func power_q = matrix_power_q(x, y, d,Q, -j, N);
-            B(x, y, s, t, d) = matrix_multiplication(x,y,d,power_p, power_q)(x, y, d);
+             
+            B(x, y, i, j, d) = matrix_multiplication(x,y,d, matrix_power_p(x, y, d, P, -i, Mi), matrix_power_q(x, y, d, Q, -j, N),n)(x, y, d);
         }
     }
 
-   
-   
-   
+    std::cout << "Total time:  " << (std::clock() - clock) / 1000.0;
+    B.compute_root();
+  
   
     M(x, y, s, t, d) = 0;
     M(x, y, 0, 0, d) = B(x, y, 0, 0, d);
@@ -171,27 +177,39 @@ int main(int argc, char** argv) {
             M(x, y, i, j, d) = M(x, y, i - 1, j, d) + M(x, y, i, j - 1, d) - M(x, y, i - 1, j - 1, d) + B(x, y, i, j, d);
         }
     }
-   
+    M.compute_root();
     
     Halide::Func L, G, K, J;
     //Here should be values of s,t(Z_s,t) 
     int S, T;
-
+    
     S = 2;
     T = 2;
-  
-    L(x, y, d) = calculate_L(M,x,y,m,n,d,S,T)(x,y,d); 
-    G(x, y, d) = calculate_G(M, x, y, m, n, d, S, T)(x, y, d);
-    K(x, y, d) = calculate_K(M, x, y, m, n, d, S, T)(x, y, d);
-    J(x, y, d) = calculate_J(M, x, y, m, n, d, S, T)(x, y, d);
-
-  
-    Halide::Func Z;
-    Z(x,y,d) = L(x,y,d) + G(x, y, d) + K(x, y, d) + J(x, y, d);
-    //Result is here
-    Halide::Func res = Z.vectorize(d);
-
+    Halide::Func Res;
+    L(x, y, s, t, d) = 0;
+    G(x, y, s, t, d) = 0;
+    K(x, y, s, t, d) = 0;
+    J(x, y, s, t, d) = 0;
     
+    Res(x, y, s, t, d) = 0;
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            
+            L(x, y,i,j, d) = calculate_L(M, x, y, m, n, d, i, j)(x, y, d);
+            G(x, y, i, j, d) = calculate_G(M, x, y, m, n, d, i, j)(x, y, d);
+            K(x, y, i, j, d) = calculate_K(M, x, y, m, n, d, i, j)(x, y, d);
+            J(x, y, i, j, d) = calculate_J(M, x, y, m, n, d, i, j)(x, y, d);
+            Res(x, y,i,j, d) = L(x, y,i,j, d) + G(x, y, i, j, d) + K(x, y, i, j, d) + J(x, y, i, j, d);
+        }
+    }
+ 
+
+  
+    
+    
+    //Result is Res(x,y,i,j,d)
+    
+    std::cout << "Total time:  " << (std::clock() - clock) / 1000.0;
    
     return 0;
 }
